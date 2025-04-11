@@ -137,9 +137,14 @@ type Person struct {
 	design *Design // Link back to the parent design
 }
 
-// InteractsWith creates a "USES" relationship from this person to another node.
+// InteractsWith creates a "INTERACTS_WITH" relationship from this person to another person.
 func (p *Person) InteractsWith(other *Person, description string) *Person {
 	p.design.addRelationship(p, other, RelInteractsWith, description)
+	return p
+}
+
+func (p *Person) Uses(n INode, description string) *Person {
+	p.design.addRelationship(p, n, RelUses, description)
 	return p
 }
 
@@ -156,7 +161,7 @@ type System struct {
 
 // ImpliedUseBy creates an implied usage relationship from a person to this system.
 // This indicates indirect interaction without explicit direct usage.
-func (s *System) ImpliedUseBy(p *Person, description string) *System {
+func (s *System) ImpliedUseBy(p INode, description string) *System {
 	s.design.addRelationship(p, s, RelImpliedUse, description)
 	return s
 }
@@ -167,9 +172,19 @@ func (s *System) UsedBy(p *Person, description string) *System {
 	return s
 }
 
+func (s *System) Uses(n INode, description string) *System {
+	s.design.addRelationship(s, n, RelUses, description)
+	return s
+}
+
 // Tag adds a tag (chainable).
 func (s *System) Tag(t string) *System {
 	s.Node.Tag(t)
+	return s
+}
+
+func (s *System) External() *System {
+	s.Node.External()
 	return s
 }
 
@@ -189,7 +204,7 @@ func (s *System) Container(name, description string) *Container {
 	s.design.nodes = append(s.design.nodes, container.Node)
 
 	// We record that the container belongs to this system
-	s.design.addRelationship(container, s, RelBelongsTo, "System contains Container")
+	s.design.addRelationship(container, s, RelBelongsTo, "Is part of")
 
 	return container
 }
@@ -203,9 +218,16 @@ type Container struct {
 }
 
 // UsedBy creates a "USES" relationship from the given person to this container.
-func (c *Container) UsedBy(p *Person, description string) *Container {
+func (c *Container) UsedBy(p INode, description string) *Container {
 	c.design.addRelationship(p, c, RelUses, description)
 	c.system.ImpliedUseBy(p, description) // Also relate container->person
+	return c
+}
+
+// Uses creates a "USES" relationship from this container to another node.
+func (c *Container) Uses(n INode, description string) *Container {
+	c.design.addRelationship(c, n, RelUses, description)
+	c.system.ImpliedUseBy(n, description) // Also relate container->system
 	return c
 }
 
@@ -244,6 +266,12 @@ func (c *Container) Component(name, description string) *Component {
 type Component struct {
 	*Node
 	container *Container
+}
+
+// Uses creates a "USES" relationship from this component to another node.
+func (c *Component) Uses(n INode, description string) *Component {
+	c.design.addRelationship(c, n, RelUses, description)
+	return c
 }
 
 // UsedBy creates a "USES" relationship from the given person to this component.
@@ -296,7 +324,7 @@ func (d *Design) Person(name, description string) *Person {
 func (d *Design) System(name, description string) *System {
 	s := &System{
 		Node: &Node{
-			ID:          "ss_" + name,
+			ID:          d.ID + ".ss_" + name,
 			Name:        name,
 			Description: description,
 			NodeType:    NodeTypeSystem,
