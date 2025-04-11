@@ -234,7 +234,7 @@ func (c *Container) Uses(n INode, description string) *Container {
 // ImpliedUseBy creates an implied usage relationship from a person to this container.
 // This indicates indirect interaction without explicit direct usage.
 // It also creates an implied usage relationship to the parent system.
-func (c *Container) ImpliedUseBy(p *Person, description string) *Container {
+func (c *Container) ImpliedUseBy(p INode, description string) *Container {
 	c.design.addRelationship(p, c, RelImpliedUse, description)
 	c.system.ImpliedUseBy(p, description) // Also relate component->person
 	return c
@@ -275,7 +275,7 @@ func (c *Component) Uses(n INode, description string) *Component {
 }
 
 // UsedBy creates a "USES" relationship from the given person to this component.
-func (c *Component) UsedBy(p *Person, description string) *Component {
+func (c *Component) UsedBy(p INode, description string) *Component {
 	c.design.addRelationship(p, c, RelUses, description)
 	c.container.ImpliedUseBy(p, description) // Also relate container->person
 	return c
