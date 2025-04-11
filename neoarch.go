@@ -59,7 +59,7 @@ type Node struct {
 	Description string   // Brief description
 	NodeType    NodeType // e.g. Person, System, Container, Component
 	Tags        []string // Arbitrary tags
-	External    bool     // For marking external nodes
+	IsExternal  bool     // For marking external nodes
 	design      *Design  // Link back to the containing Design
 }
 
@@ -68,9 +68,62 @@ func (n *Node) GetID() string {
 	return n.ID
 }
 
-// Tag appends a tag to the Node.
 func (n *Node) Tag(tag string) {
 	n.Tags = append(n.Tags, tag)
+}
+func (n *Node) External() {
+	n.IsExternal = true
+}
+func (n *Node) Internal() {
+	n.IsExternal = false
+}
+
+// Tag appends a tag to the Person.
+func (p *Person) Tag(tag string) *Person {
+	p.Node.Tag(tag)
+	return p
+}
+
+func (p *Person) External() *Person {
+	p.Node.External()
+	return p
+}
+
+func (p *Person) Internal() *Person {
+	p.Node.Internal()
+	return p
+}
+
+// Tag appends a tag to the Container.
+func (c *Container) Tag(tag string) *Container {
+	c.Node.Tag(tag)
+	return c
+}
+
+func (c *Container) External() *Container {
+	c.Node.External()
+	return c
+}
+
+func (c *Container) Internal() *Container {
+	c.Node.Internal()
+	return c
+}
+
+// Tag appends a tag to the Component.
+func (c *Component) Tag(tag string) *Component {
+	c.Node.Tag(tag)
+	return c
+}
+
+func (c *Component) External() *Component {
+	c.Node.External()
+	return c
+}
+
+func (c *Component) Internal() *Component {
+	c.Node.Internal()
+	return c
 }
 
 // -----------------------------------------------------------------------------
@@ -165,12 +218,6 @@ func (c *Container) ImpliedUseBy(p *Person, description string) *Container {
 	return c
 }
 
-// Tag adds a tag (chainable).
-func (c *Container) Tag(t string) *Container {
-	c.Node.Tag(t)
-	return c
-}
-
 // Component creates a new Component and relates container->component with BELONGS_TO.
 func (c *Container) Component(name, description string) *Component {
 	component := &Component{
@@ -203,12 +250,6 @@ type Component struct {
 func (c *Component) UsedBy(p *Person, description string) *Component {
 	c.design.addRelationship(p, c, RelUses, description)
 	c.container.ImpliedUseBy(p, description) // Also relate container->person
-	return c
-}
-
-// Tag adds a tag (chainable).
-func (c *Component) Tag(t string) *Component {
-	c.Node.Tag(t)
 	return c
 }
 
@@ -298,9 +339,9 @@ func (d *Design) SaveToNeo4j(driver neo4j.Driver) error {
 				setStr += ", n.tag_" + tag + "=$tag_" + tag
 				params["tag_"+tag] = tag
 			}
-			if node.External {
+			if node.IsExternal {
 				setStr += ", n.external=$ext"
-				params["ext"] = node.External
+				params["ext"] = node.IsExternal
 			}
 
 			query := `
