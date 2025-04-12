@@ -159,9 +159,15 @@ type System struct {
 	design *Design // Link back to the parent design
 }
 
-// ImpliedUseBy creates an implied usage relationship from a person to this system.
-// This indicates indirect interaction without explicit direct usage.
-func (s *System) ImpliedUseBy(p INode, description string) *System {
+func (s *System) ImpliedUse(p INode, description string) *System {
+	// s uses p (implied)
+	s.design.addRelationship(s, p, RelImpliedUse, description)
+	return s
+}
+
+// ImpliedUsedBy creates an implied usage relationship from a person to this system.
+func (s *System) ImpliedUsedBy(p INode, description string) *System {
+	// p uses s (implied)
 	s.design.addRelationship(p, s, RelImpliedUse, description)
 	return s
 }
@@ -219,24 +225,42 @@ type Container struct {
 
 // UsedBy creates a "USES" relationship from the given person to this container.
 func (c *Container) UsedBy(p INode, description string) *Container {
+	// p uses c: add explicit relationship: p -> container
 	c.design.addRelationship(p, c, RelUses, description)
-	c.system.ImpliedUseBy(p, description) // Also relate container->person
+	// Propagate: p also uses container's system: add implied relationship p -> system
+	c.system.ImpliedUsedBy(p, description)
 	return c
 }
 
-// Uses creates a "USES" relationship from this container to another node.
 func (c *Container) Uses(n INode, description string) *Container {
+	// c uses n: add explicit relationship: container -> target
 	c.design.addRelationship(c, n, RelUses, description)
-	c.system.ImpliedUseBy(n, description) // Also relate container->system
+
+	// c.system impled usage: c.system.system -> n
+	c.system.ImpliedUse(n, description)
+
+	// If the target node belongs to a container, create an implied relationship: using system -> target container’s system
+	if targetContainer, ok := n.(*Container); ok && targetContainer.system != nil {
+		if targetContainer.system.ID != c.system.ID {
+			c.system.ImpliedUse(targetContainer.system, description+" (implied "+targetContainer.ID+"--"+c.system.ID+")")
+		}
+	}
+
+	// If the target node belongs to a component, create an implied relationship: using system -> target component's system
+	if targetComponent, ok := n.(*Component); ok && targetComponent.container != nil && targetComponent.container.system != nil {
+		if targetComponent.container.system.ID != c.system.ID {
+			c.system.ImpliedUse(targetComponent.container.system, description)
+		}
+	}
+
 	return c
 }
 
-// ImpliedUseBy creates an implied usage relationship from a person to this container.
-// This indicates indirect interaction without explicit direct usage.
-// It also creates an implied usage relationship to the parent system.
-func (c *Container) ImpliedUseBy(p INode, description string) *Container {
+func (c *Container) ImpliedUsedBy(p INode, description string) *Container {
+	// p uses c (implied)
 	c.design.addRelationship(p, c, RelImpliedUse, description)
-	c.system.ImpliedUseBy(p, description) // Also relate component->person
+	// Propagate: p also uses c.system (implied) as p -> system
+	c.system.ImpliedUsedBy(p, description)
 	return c
 }
 
@@ -268,16 +292,28 @@ type Component struct {
 	container *Container
 }
 
-// Uses creates a "USES" relationship from this component to another node.
 func (c *Component) Uses(n INode, description string) *Component {
 	c.design.addRelationship(c, n, RelUses, description)
+
+	// If the target node belongs to a container, create an implied relationship:
+	// component's system uses target container's system (c.container.system -> targetContainer.system)
+	if targetContainer, ok := n.(*Container); ok && targetContainer.system != nil {
+		c.container.system.ImpliedUsedBy(targetContainer.system, description)
+	}
+
+	// If the target node belongs to a component, create an implied relationship:
+	// component's system uses target component's system (c.container.system -> targetComponent.container.system)
+	if targetComponent, ok := n.(*Component); ok && targetComponent.container != nil && targetComponent.container.system != nil {
+		c.container.system.ImpliedUsedBy(targetComponent.container.system, description)
+	}
+
 	return c
 }
 
 // UsedBy creates a "USES" relationship from the given person to this component.
 func (c *Component) UsedBy(p INode, description string) *Component {
 	c.design.addRelationship(p, c, RelUses, description)
-	c.container.ImpliedUseBy(p, description) // Also relate container->person
+	c.container.ImpliedUsedBy(p, description) // Also relate container->person
 	return c
 }
 
@@ -339,6 +375,15 @@ func (d *Design) System(name, description string) *System {
 // addRelationship is a helper to record relationships in the design.
 // It takes start and end nodes, relationship type, and a description.
 func (d *Design) addRelationship(startID, endID INode, relType RelationshipType, desc string) {
+	// check if endId belongs_to startId, and we're adding a implied use from startId to endId, ignore
+	if relType == RelImpliedUse {
+		for _, rel := range d.relationships {
+			if rel.StartID == endID.GetID() && rel.EndID == startID.GetID() && rel.Type == RelBelongsTo {
+				return
+			}
+		}
+	}
+
 	d.relationships = append(d.relationships, Relationship{
 		StartID:     startID.GetID(),
 		EndID:       endID.GetID(),
