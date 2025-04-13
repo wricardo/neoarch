@@ -1,8 +1,10 @@
 # 🧠 neoarch: C4 Modeling DSL for Go + Neo4j
 
-**neoarch** is a Go library that provides a Domain Specific Language (DSL) for constructing and persisting C4 architecture models using Neo4j. With neoarch, you can define various architectural elements—**Persons**, **Systems**, **Containers**, and **Components**—and establish meaningful relationships between them using intuitive, chainable methods. It simplifies architecture documentation and lets you query, visualize, and refine your system structure through graph databases.
+**neoarch** is a Go library that provides a Domain Specific Language (DSL) for constructing and persisting C4 architecture models using Go + Neo4j. With neoarch, you can define various architectural elements—**Persons**, **Systems**, **Containers**, and **Components**—and establish meaningful relationships between them using Go programing language through intuitive and chainable methods. It lets you create, query and visualize your system structure through graph databases.
 
 ---
+<img width="2000" alt="Screenshot 2025-04-13 at 4 49 24 AM" src="https://github.com/user-attachments/assets/efe1809d-6796-4667-a6c0-29337ef19154" />
+
 
 ## 📚 Table of Contents
 
