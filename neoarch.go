@@ -6,6 +6,7 @@ package neoarch
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -18,6 +19,7 @@ import (
 type NodeType string
 
 const (
+	NodeTypeDesign    NodeType = "Design"
 	NodeTypePerson    NodeType = "Person"
 	NodeTypeSystem    NodeType = "System"
 	NodeTypeContainer NodeType = "Container"
@@ -46,6 +48,8 @@ type Relationship struct {
 // Any type that implements this interface can be used as a node in relationships.
 type INode interface {
 	GetID() string
+	FullName() string
+	FullId() string
 }
 
 // -----------------------------------------------------------------------------
@@ -61,6 +65,50 @@ type Node struct {
 	Tags        []string // Arbitrary tags
 	IsExternal  bool     // For marking external nodes
 	design      *Design  // Link back to the containing Design
+	ParentNode  INode    // Parent node (if any)
+}
+
+func NewNodeWithParent(parent INode, design *Design, name, description string, nodeType NodeType) *Node {
+	n := &Node{
+		ID:          makeId(name),
+		Name:        name,
+		Description: description,
+		NodeType:    nodeType,
+		Tags:        []string{},
+		IsExternal:  false,
+		ParentNode:  parent,
+		design:      design,
+	}
+
+	return n
+}
+
+func NewNode(name, description string, nodeType NodeType) *Node {
+	return &Node{
+		ID:          makeId(name),
+		Name:        name,
+		Description: description,
+		NodeType:    nodeType,
+		Tags:        []string{},
+		IsExternal:  false,
+	}
+}
+
+func (n *Node) FullId() string {
+	if n == nil {
+		return ""
+	}
+	if n.ParentNode != nil {
+		return n.ParentNode.FullId() + "." + n.ID
+	}
+	return n.ID
+}
+
+func (n *Node) FullName() string {
+	if n.ParentNode != nil {
+		return n.ParentNode.FullName() + "." + n.Name
+	}
+	return n.Name
 }
 
 // GetID returns the ID of the node.
@@ -198,13 +246,7 @@ func (s *System) External() *System {
 // with "BELONGS_TO". You can adapt as needed.
 func (s *System) Container(name, description string) *Container {
 	container := &Container{
-		Node: &Node{
-			ID:          fmt.Sprintf("%s.cr_%s", s.ID, name), // For uniqueness
-			Name:        name,
-			Description: description,
-			NodeType:    NodeTypeContainer,
-			design:      s.design,
-		},
+		Node:   NewNodeWithParent(s, s.design, name, description, NodeTypeContainer),
 		system: s,
 	}
 	s.design.nodes = append(s.design.nodes, container.Node)
@@ -267,14 +309,8 @@ func (c *Container) ImpliedUsedBy(p INode, description string) *Container {
 // Component creates a new Component and relates container->component with BELONGS_TO.
 func (c *Container) Component(name, description string) *Component {
 	component := &Component{
+		Node:      NewNodeWithParent(c, c.design, name, description, NodeTypeComponent),
 		container: c,
-		Node: &Node{
-			ID:          fmt.Sprintf("%s.ct_%s", c.ID, name),
-			Name:        name,
-			Description: description,
-			NodeType:    NodeTypeComponent,
-			design:      c.design,
-		},
 	}
 	c.design.nodes = append(c.design.nodes, component.Node)
 
@@ -332,42 +368,62 @@ type Design struct {
 
 // NewDesign creates a new C4 design
 func NewDesign(name, description string) *Design {
-	return &Design{
+	d := &Design{
 		ID:          "design_" + name,
 		Name:        name,
 		Description: description,
 		nodes:       []*Node{},
 	}
+	d.nodes = append(d.nodes, &Node{
+		ID:          makeId(d.ID),
+		Name:        name,
+		Description: description,
+		NodeType:    NodeTypeDesign,
+		Tags:        []string{"design"},
+		IsExternal:  false,
+		design:      d,
+	})
+	return d
+
 }
 
 // Person constructs a Person node in this Design.
 func (d *Design) Person(name, description string) *Person {
 	p := &Person{
-		Node: &Node{
-			ID:          "person_" + name,
-			Name:        name,
-			Description: description,
-			NodeType:    NodeTypePerson,
-			design:      d,
-		},
+		Node:   NewNode("person_"+name, description, NodeTypePerson),
 		design: d,
 	}
+	p.Node.design = d // Set design reference
+	d.addRelationship(p, d, RelBelongsTo, "Belongs to")
+
 	d.nodes = append(d.nodes, p.Node)
 	return p
+}
+
+func (d *Design) GetID() string {
+	return d.ID
+}
+
+func (d *Design) FullName() string {
+	return d.Name
+}
+
+func (d *Design) FullNameSlice() []string {
+	return []string{d.Name}
+}
+
+func (d *Design) FullId() string {
+	return d.ID
 }
 
 // System constructs a System node in this Design.
 func (d *Design) System(name, description string) *System {
 	s := &System{
-		Node: &Node{
-			ID:          d.ID + ".ss_" + name,
-			Name:        name,
-			Description: description,
-			NodeType:    NodeTypeSystem,
-			design:      d,
-		},
+		Node:   NewNode(name, description, NodeTypeSystem),
 		design: d,
 	}
+	s.Node.design = d // Set design reference
+	d.addRelationship(s, d, RelBelongsTo, "Belongs to")
 	d.nodes = append(d.nodes, s.Node)
 	return s
 }
@@ -378,18 +434,23 @@ func (d *Design) addRelationship(startID, endID INode, relType RelationshipType,
 	// check if endId belongs_to startId, and we're adding a implied use from startId to endId, ignore
 	if relType == RelImpliedUse {
 		for _, rel := range d.relationships {
-			if rel.StartID == endID.GetID() && rel.EndID == startID.GetID() && rel.Type == RelBelongsTo {
+			if rel.StartID == endID.FullId() && rel.EndID == startID.FullId() && rel.Type == RelBelongsTo {
 				return
 			}
 		}
 	}
 
 	d.relationships = append(d.relationships, Relationship{
-		StartID:     startID.GetID(),
-		EndID:       endID.GetID(),
+		StartID:     startID.FullId(),
+		EndID:       endID.FullId(),
 		Type:        relType,
 		Description: desc,
 	})
+}
+
+// DeleteFromNeo4j removes the design and all its related nodes and relationships from the Neo4j database.
+func (d *Design) DeleteFromNeo4j(driver neo4j.Driver) error {
+	return DeleteFromNeo4j(d.ID, driver)
 }
 
 // SaveToNeo4j pushes the entire model to the Neo4j database
@@ -402,7 +463,7 @@ func (d *Design) SaveToNeo4j(driver neo4j.Driver) error {
 		for _, node := range d.nodes {
 			setStr := "n.name=$name, n.description=$desc, n.nodeType=$nodeType, n.tags=$tags"
 			params := map[string]any{
-				"id":       node.ID,
+				"id":       node.FullId(),
 				"name":     node.Name,
 				"desc":     node.Description,
 				"nodeType": string(node.NodeType),
@@ -445,6 +506,46 @@ MERGE (start)-[r:%s { description: $desc }]->(end)
 			}
 		}
 		return nil, nil
+	})
+	return err
+}
+
+func DeleteFromNeo4j(designId string, driver neo4j.Driver) error {
+	session := driver.NewSession(neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close()
+
+	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (any, error) {
+		// Match the Design node and delete it along with all related nodes and relationships
+		query := `
+MATCH (design :Design{id: $designID})-[r*0..]->(related)
+DETACH DELETE design, related
+`
+		_, e := tx.Run(query, map[string]any{"designID": designId})
+		return nil, e
+	})
+	return err
+}
+
+// makeId generate a structurizr compatible ID from a name
+func makeId(name string) string {
+	// Generate a unique ID for the node
+	name = strings.ReplaceAll(name, " ", "_")
+	name = strings.ReplaceAll(name, ".", "_")
+	return strings.ToLower(name)
+}
+
+// ClearNeo4j_UNSAFE deletes all nodes and relationships in the Neo4j database.
+func ClearNeo4j_UNSAFE(driver neo4j.Driver) error {
+	session := driver.NewSession(neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close()
+
+	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (any, error) {
+		query := `
+MATCH (n)
+DETACH DELETE n
+`
+		_, e := tx.Run(query, nil)
+		return nil, e
 	})
 	return err
 }
