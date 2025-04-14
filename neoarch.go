@@ -5,6 +5,7 @@
 package neoarch
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -196,7 +197,7 @@ func (p *Person) Uses(n INode, description string) *Person {
 	return p
 }
 
-// Person can also use “UsedBy” if you want to invert direction, but here we
+// Person can also use "UsedBy" if you want to invert direction, but here we
 // only define InteractsWith, as per your example usage.
 
 // -----------------------------------------------------------------------------
@@ -281,7 +282,7 @@ func (c *Container) Uses(n INode, description string) *Container {
 	// c.system impled usage: c.system.system -> n
 	c.system.ImpliedUse(n, description)
 
-	// If the target node belongs to a container, create an implied relationship: using system -> target container’s system
+	// If the target node belongs to a container, create an implied relationship: using system -> target container's system
 	if targetContainer, ok := n.(*Container); ok && targetContainer.system != nil {
 		if targetContainer.system.ID != c.system.ID {
 			c.system.ImpliedUse(targetContainer.system, description+" (implied "+targetContainer.ID+"--"+c.system.ID+")")
@@ -449,16 +450,33 @@ func (d *Design) addRelationship(startID, endID INode, relType RelationshipType,
 }
 
 // DeleteFromNeo4j removes the design and all its related nodes and relationships from the Neo4j database.
-func (d *Design) DeleteFromNeo4j(driver neo4j.Driver) error {
-	return DeleteFromNeo4j(d.ID, driver)
+func DeleteFromNeo4j(ctx context.Context, designId string, driver neo4j.DriverWithContext) error {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		// Match the Design node and delete it along with all related nodes and relationships
+		query := `
+MATCH (design :Design{id: $designID})-[r*0..]->(related)
+DETACH DELETE design, related
+`
+		_, e := tx.Run(ctx, query, map[string]any{"designID": designId})
+		return nil, e
+	})
+	return err
+}
+
+// DeleteFromNeo4j removes the design and all its related nodes and relationships from the Neo4j database.
+func (d *Design) DeleteFromNeo4j(ctx context.Context, driver neo4j.DriverWithContext) error {
+	return DeleteFromNeo4j(ctx, d.ID, driver)
 }
 
 // SaveToNeo4j pushes the entire model to the Neo4j database
-func (d *Design) SaveToNeo4j(driver neo4j.Driver) error {
-	session := driver.NewSession(neo4j.SessionConfig{DatabaseName: "neo4j"})
-	defer session.Close()
+func (d *Design) SaveToNeo4j(ctx context.Context, driver neo4j.DriverWithContext) error {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
 
-	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (any, error) {
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		// MERGE all nodes
 		for _, node := range d.nodes {
 			setStr := "n.name=$name, n.description=$desc, n.nodeType=$nodeType, n.tags=$tags"
@@ -483,7 +501,7 @@ MERGE (n:` + string(node.NodeType) + ` { id: $id })
 ON CREATE SET ` + setStr + `
 ON MATCH SET  ` + setStr + `
 `
-			if _, e := tx.Run(query, params); e != nil {
+			if _, e := tx.Run(ctx, query, params); e != nil {
 				return nil, e
 			}
 		}
@@ -501,27 +519,11 @@ MERGE (start)-[r:%s { description: $desc }]->(end)
 				"endID":   rel.EndID,
 				"desc":    rel.Description,
 			}
-			if _, e := tx.Run(query, params); e != nil {
+			if _, e := tx.Run(ctx, query, params); e != nil {
 				return nil, e
 			}
 		}
 		return nil, nil
-	})
-	return err
-}
-
-func DeleteFromNeo4j(designId string, driver neo4j.Driver) error {
-	session := driver.NewSession(neo4j.SessionConfig{DatabaseName: "neo4j"})
-	defer session.Close()
-
-	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (any, error) {
-		// Match the Design node and delete it along with all related nodes and relationships
-		query := `
-MATCH (design :Design{id: $designID})-[r*0..]->(related)
-DETACH DELETE design, related
-`
-		_, e := tx.Run(query, map[string]any{"designID": designId})
-		return nil, e
 	})
 	return err
 }
@@ -535,16 +537,16 @@ func makeId(name string) string {
 }
 
 // ClearNeo4j_UNSAFE deletes all nodes and relationships in the Neo4j database.
-func ClearNeo4j_UNSAFE(driver neo4j.Driver) error {
-	session := driver.NewSession(neo4j.SessionConfig{DatabaseName: "neo4j"})
-	defer session.Close()
+func ClearNeo4j_UNSAFE(ctx context.Context, driver neo4j.DriverWithContext) error {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
 
-	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (any, error) {
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		query := `
 MATCH (n)
 DETACH DELETE n
 `
-		_, e := tx.Run(query, nil)
+		_, e := tx.Run(ctx, query, nil)
 		return nil, e
 	})
 	return err
