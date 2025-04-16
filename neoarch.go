@@ -6,6 +6,8 @@ package neoarch
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -321,12 +323,51 @@ func (c *Container) Component(name, description string) *Component {
 	return component
 }
 
+func (c *Container) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
+	component := &CustomComponent{
+		Node:      NewNodeWithParent(c, c.design, name, description, NodeType(label)),
+		container: c,
+	}
+	c.design.nodes = append(c.design.nodes, component.Node)
+
+	// We record that the component belongs to this container
+	finalBelongsToDescription := "Belongs to"
+	if len(belongsToDescription) > 0 {
+		finalBelongsToDescription = belongsToDescription[0]
+	}
+	c.design.addRelationship(component, c, RelBelongsTo, finalBelongsToDescription)
+
+	return component
+}
+
+type CustomComponent struct {
+	*Node
+	container *Container
+}
+
 // -----------------------------------------------------------------------------
 
 // Component represents a "Component" node in C4.
 type Component struct {
 	*Node
 	container *Container
+}
+
+func (c *Component) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
+	component := &CustomComponent{
+		Node:      NewNodeWithParent(c, c.design, string(name), description, NodeType(label)),
+		container: c.container,
+	}
+	c.design.nodes = append(c.design.nodes, component.Node)
+
+	// We record that the component belongs to this container
+	finalBelongsToDescription := "Belongs to"
+	if len(belongsToDescription) > 0 {
+		finalBelongsToDescription = belongsToDescription[0]
+	}
+	c.design.addRelationship(component, c, RelBelongsTo, finalBelongsToDescription)
+
+	return component
 }
 
 func (c *Component) Uses(n INode, description string) *Component {
@@ -360,11 +401,12 @@ func (c *Component) UsedBy(p INode, description string) *Component {
 
 // Design represents a C4 model
 type Design struct {
-	ID            string
-	Name          string
-	Description   string
-	nodes         []*Node
-	relationships []Relationship
+	ID                string
+	Name              string
+	Description       string
+	nodes             []*Node
+	relationships     []Relationship
+	impliedUseEnabled bool
 }
 
 // NewDesign creates a new C4 design
@@ -386,6 +428,12 @@ func NewDesign(name, description string) *Design {
 	})
 	return d
 
+}
+
+// EnableImpliedUse enables or disables implied use relationships.
+// Implied use relationships are relationships that are not explicitly created but are implied by the relationships between nodes.
+func (d *Design) EnableImpliedUse(enable bool) {
+	d.impliedUseEnabled = enable
 }
 
 // Person constructs a Person node in this Design.
@@ -432,6 +480,10 @@ func (d *Design) System(name, description string) *System {
 // addRelationship is a helper to record relationships in the design.
 // It takes start and end nodes, relationship type, and a description.
 func (d *Design) addRelationship(startID, endID INode, relType RelationshipType, desc string) {
+	if !d.impliedUseEnabled && relType == RelImpliedUse {
+		return
+	}
+
 	// check if endId belongs_to startId, and we're adding a implied use from startId to endId, ignore
 	if relType == RelImpliedUse {
 		for _, rel := range d.relationships {
@@ -488,6 +540,11 @@ func (d *Design) SaveToNeo4j(ctx context.Context, driver neo4j.DriverWithContext
 				"tags":     node.Tags,
 			}
 			for _, tag := range node.Tags {
+				tag = strings.ReplaceAll(tag, `-`, `_`)
+				tag = strings.ReplaceAll(tag, `:`, `_`)
+				tag = strings.ReplaceAll(tag, ` `, `_`)
+				tag = strings.ReplaceAll(tag, `"`, `_`)
+				tag = strings.ReplaceAll(tag, `'`, `_`)
 				setStr += ", n.tag_" + tag + "=$tag_" + tag
 				params["tag_"+tag] = tag
 			}
@@ -550,4 +607,11 @@ DETACH DELETE n
 		return nil, e
 	})
 	return err
+}
+
+// MD5 returns the MD5 hash of a string.
+func MD5(s string) string {
+	h := md5.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
 }
