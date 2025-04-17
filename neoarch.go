@@ -63,6 +63,7 @@ type INode interface {
 type Node struct {
 	ID          string   // Unique identifier (could be the "name")
 	Name        string   // Display name
+	Labels      []string // Arbitrary extra labels that will be added to the node in addition to the node type
 	Description string   // Brief description
 	NodeType    NodeType // e.g. Person, System, Container, Component
 	Tags        []string // Arbitrary tags
@@ -95,6 +96,11 @@ func NewNode(name, description string, nodeType NodeType) *Node {
 		Tags:        []string{},
 		IsExternal:  false,
 	}
+}
+
+func (n *Node) AddLabel(label string) *Node {
+	n.Labels = append(n.Labels, label)
+	return n
 }
 
 func (n *Node) FullId() string {
@@ -149,6 +155,11 @@ func (p *Person) Internal() *Person {
 func (c *Container) Tag(tag string) *Container {
 	c.Node.Tag(tag)
 	return c
+}
+
+func (n *Container) AddLabel(label string) *Container {
+	n.Node.AddLabel(label)
+	return n
 }
 
 func (c *Container) External() *Container {
@@ -353,6 +364,11 @@ type Component struct {
 	container *Container
 }
 
+func (c *Component) AddLabel(label string) *Component {
+	c.Node.AddLabel(label)
+	return c
+}
+
 func (c *Component) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
 	component := &CustomComponent{
 		Node:      NewNodeWithParent(c, c.design, string(name), description, NodeType(label)),
@@ -430,6 +446,33 @@ func NewDesign(name, description string) *Design {
 
 }
 
+// NodeReference fetches an element from the design by its ID.
+func (d *Design) NodeReference(id string) INode {
+	for _, node := range d.nodes {
+		if node.FullId() == id {
+			return node
+		}
+	}
+	return &NodeReference{ID: id}
+}
+
+type NodeReference struct {
+	ID           string
+	resolvedNode INode // populated when resolved
+}
+
+func (n *NodeReference) FullId() string {
+	return n.ID
+}
+
+func (n *NodeReference) FullName() string {
+	return n.resolvedNode.FullName()
+}
+
+func (n *NodeReference) GetID() string {
+	return n.ID
+}
+
 // EnableImpliedUse enables or disables implied use relationships.
 // Implied use relationships are relationships that are not explicitly created but are implied by the relationships between nodes.
 func (d *Design) EnableImpliedUse(enable bool) {
@@ -479,7 +522,7 @@ func (d *Design) System(name, description string) *System {
 
 // addRelationship is a helper to record relationships in the design.
 // It takes start and end nodes, relationship type, and a description.
-func (d *Design) addRelationship(startID, endID INode, relType RelationshipType, desc string) {
+func (d *Design) addRelationship(startNode, endNode INode, relType RelationshipType, desc string) {
 	if !d.impliedUseEnabled && relType == RelImpliedUse {
 		return
 	}
@@ -487,15 +530,15 @@ func (d *Design) addRelationship(startID, endID INode, relType RelationshipType,
 	// check if endId belongs_to startId, and we're adding a implied use from startId to endId, ignore
 	if relType == RelImpliedUse {
 		for _, rel := range d.relationships {
-			if rel.StartID == endID.FullId() && rel.EndID == startID.FullId() && rel.Type == RelBelongsTo {
+			if rel.StartID == endNode.FullId() && rel.EndID == startNode.FullId() && rel.Type == RelBelongsTo {
 				return
 			}
 		}
 	}
 
 	d.relationships = append(d.relationships, Relationship{
-		StartID:     startID.FullId(),
-		EndID:       endID.FullId(),
+		StartID:     startNode.FullId(),
+		EndID:       endNode.FullId(),
 		Type:        relType,
 		Description: desc,
 	})
@@ -553,12 +596,23 @@ func (d *Design) SaveToNeo4j(ctx context.Context, driver neo4j.DriverWithContext
 				params["ext"] = node.IsExternal
 			}
 
-			query := `
-MERGE (n:` + string(node.NodeType) + ` { id: $id })
+			query := strings.Builder{}
+
+			if len(node.Labels) > 0 {
+				query.WriteString(`MERGE (n:` + string(node.NodeType))
+				for _, label := range node.Labels {
+					query.WriteString(`:` + label)
+				}
+				query.WriteString(` { id: $id })`)
+			} else {
+				query.WriteString(`MERGE (n:` + string(node.NodeType) + ` { id: $id })`)
+			}
+			query.WriteString(`
 ON CREATE SET ` + setStr + `
 ON MATCH SET  ` + setStr + `
-`
-			if _, e := tx.Run(ctx, query, params); e != nil {
+`)
+
+			if _, e := tx.Run(ctx, query.String(), params); e != nil {
 				return nil, e
 			}
 		}
@@ -566,8 +620,8 @@ ON MATCH SET  ` + setStr + `
 		// MERGE all relationships
 		for _, rel := range d.relationships {
 			query := fmt.Sprintf(`
-MATCH (start { id: $startID })
-MATCH (end { id: $endID })
+MERGE (start { id: $startID })
+MERGE (end { id: $endID })
 MERGE (start)-[r:%s { description: $desc }]->(end)
 `, rel.Type)
 
