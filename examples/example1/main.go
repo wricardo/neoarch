@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -43,16 +44,16 @@ func main() {
 	username := "neo4j"
 	password := "neo4jneo4j"
 
-	driver, err := neo4j.NewDriver(neo4jURI, neo4j.BasicAuth(username, password, ""))
+	driver, err := neo4j.NewDriverWithContext(neo4jURI, neo4j.BasicAuth(username, password, ""))
 	if err != nil {
 		log.Fatal("Failed to create driver:", err)
 	}
 
-	defer driver.Close()
+	defer driver.Close(context.Background())
 	clearNeo4j(driver)
 
 	// Push the design to Neo4j
-	if err := design.SaveToNeo4j(driver); err != nil {
+	if err := design.SaveToNeo4j(context.Background(), driver); err != nil {
 		log.Fatalf("Failed to save design: %v", err)
 	} else {
 		fmt.Println("Design saved successfully to Neo4j!")
@@ -60,14 +61,11 @@ func main() {
 }
 
 // clearNeo4j is a helper to wipe all nodes & relationships in the DB.
-func clearNeo4j(driver neo4j.Driver) {
-	session := driver.NewSession(neo4j.SessionConfig{DatabaseName: "neo4j"})
-	defer session.Close()
+func clearNeo4j(driver neo4j.DriverWithContext) {
+	session := driver.NewSession(context.Background(), neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(context.Background())
 
-	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (any, error) {
-		_, e := tx.Run("MATCH (n) DETACH DELETE n", nil)
-		return nil, e
-	})
+	_, err := session.Run(context.Background(), "MATCH (n) DETACH DELETE n", nil)
 	if err != nil {
 		log.Fatalf("Failed to clear Neo4j: %v", err)
 	} else {

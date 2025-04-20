@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -102,15 +103,16 @@ func main() {
 	followService.Component("Repository", "Follow persistence")
 
 	// Save to Neo4j
-	driver, err := neo4j.NewDriver("neo4j://localhost:7687", neo4j.BasicAuth("neo4j", "neo4jneo4j", ""))
+	ctx := context.Background()
+	driver, err := neo4j.NewDriverWithContext("neo4j://localhost:7687", neo4j.BasicAuth("neo4j", "neo4jneo4j", ""))
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer driver.Close()
+	defer driver.Close(ctx)
 
 	// neoarch.ClearNeo4j_UNSAFE(driver)
 
-	if err := design.SaveToNeo4j(driver); err != nil {
+	if err := design.SaveToNeo4j(ctx, driver); err != nil {
 		log.Fatal("Failed to persist design:", err)
 	}
 

@@ -72,14 +72,12 @@ type Node struct {
 	ParentNode  INode    // Parent node (if any)
 }
 
-func NewNodeWithParent(parent INode, design *Design, name, description string, nodeType NodeType) *Node {
+func NewNodeWithIdAndParent(id string, parent INode, design *Design, name, description string, nodeType NodeType) *Node {
 	n := &Node{
-		ID:          makeId(name),
+		ID:          id,
 		Name:        name,
 		Description: description,
 		NodeType:    nodeType,
-		Tags:        []string{},
-		IsExternal:  false,
 		ParentNode:  parent,
 		design:      design,
 	}
@@ -87,15 +85,12 @@ func NewNodeWithParent(parent INode, design *Design, name, description string, n
 	return n
 }
 
+func NewNodeWithParent(parent INode, design *Design, name, description string, nodeType NodeType) *Node {
+	return NewNodeWithIdAndParent(makeId(name), parent, design, name, description, nodeType)
+}
+
 func NewNode(name, description string, nodeType NodeType) *Node {
-	return &Node{
-		ID:          makeId(name),
-		Name:        name,
-		Description: description,
-		NodeType:    nodeType,
-		Tags:        []string{},
-		IsExternal:  false,
-	}
+	return NewNodeWithIdAndParent(makeId(name), nil, nil, name, description, nodeType)
 }
 
 func (n *Node) AddLabel(label string) *Node {
@@ -322,8 +317,12 @@ func (c *Container) ImpliedUsedBy(p INode, description string) *Container {
 
 // Component creates a new Component and relates container->component with BELONGS_TO.
 func (c *Container) Component(name, description string) *Component {
+	return c.ComponentWithId(makeId(name), name, description)
+}
+
+func (c *Container) ComponentWithId(id string, name, description string) *Component {
 	component := &Component{
-		Node:      NewNodeWithParent(c, c.design, name, description, NodeTypeComponent),
+		Node:      NewNodeWithIdAndParent(id, c, c.design, name, description, NodeTypeComponent),
 		container: c,
 	}
 	c.design.nodes = append(c.design.nodes, component.Node)
@@ -336,7 +335,7 @@ func (c *Container) Component(name, description string) *Component {
 
 func (c *Container) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
 	component := &CustomComponent{
-		Node:      NewNodeWithParent(c, c.design, name, description, NodeType(label)),
+		Node:      NewNodeWithIdAndParent(makeId(name), c, c.design, name, description, NodeType(label)),
 		container: c,
 	}
 	c.design.nodes = append(c.design.nodes, component.Node)
@@ -371,7 +370,7 @@ func (c *Component) AddLabel(label string) *Component {
 
 func (c *Component) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
 	component := &CustomComponent{
-		Node:      NewNodeWithParent(c, c.design, string(name), description, NodeType(label)),
+		Node:      NewNodeWithIdAndParent(makeId(name), c, c.design, name, description, NodeType(label)),
 		container: c.container,
 	}
 	c.design.nodes = append(c.design.nodes, component.Node)
