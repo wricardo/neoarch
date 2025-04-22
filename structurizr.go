@@ -13,16 +13,16 @@ func (d *Design) ToStructurizrDSL() string {
 	// 1) Build a lookup of nodes by ID.
 	nodeByID := make(map[string]*Node)
 	for _, n := range d.nodes {
-		nodeByID[makeId(n.FullId())] = n
+		nodeByID[n.FullId()] = n
 	}
 
 	// 2) Build a parent->children map from BELONGS_TO relationships.
 	parentChildren := map[string][]*Node{}
 	for _, rel := range d.relationships {
 		if rel.Type == RelBelongsTo {
-			child := nodeByID[makeId(rel.StartID)]
+			child := nodeByID[rel.StartID]
 			if child != nil {
-				parentChildren[makeId(rel.EndID)] = append(parentChildren[makeId(rel.EndID)], child)
+				parentChildren[rel.EndID] = append(parentChildren[rel.EndID], child)
 			} else {
 				log.Printf("Warning: Child node %s not found for relationship %v", rel.StartID, rel)
 			}
@@ -116,7 +116,8 @@ func (d *Design) ToStructurizrDSL() string {
 	// For each top-level system (child of the design node), define systemContext and container views.
 	for _, sys := range parentChildren[designNode.ID] {
 		if sys.NodeType == NodeTypeSystem {
-			sysShort := makeId(sys.ID)
+			// sysShort := makeId(sys.ID)
+			sysShort := sys.ID
 			sysName := sanitizeQuotes(sys.Name)
 			sb.WriteLinef(`systemContext %s "system_context_%s" {`, sysShort, sysName)
 			sb.Indent()

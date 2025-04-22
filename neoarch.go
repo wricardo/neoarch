@@ -22,6 +22,7 @@ import (
 type NodeType string
 
 const (
+	NodeTypeUnknown   NodeType = "Unknown"
 	NodeTypeDesign    NodeType = "Design"
 	NodeTypePerson    NodeType = "Person"
 	NodeTypeSystem    NodeType = "System"
@@ -81,16 +82,19 @@ func NewNodeWithIdAndParent(id string, parent INode, design *Design, name, descr
 		ParentNode:  parent,
 		design:      design,
 	}
+	if parent != nil {
+		n.ID = parent.GetID() + "." + n.ID
+	}
 
 	return n
 }
 
 func NewNodeWithParent(parent INode, design *Design, name, description string, nodeType NodeType) *Node {
-	return NewNodeWithIdAndParent(makeId(name), parent, design, name, description, nodeType)
+	return NewNodeWithIdAndParent(name, parent, design, name, description, nodeType)
 }
 
 func NewNode(name, description string, nodeType NodeType) *Node {
-	return NewNodeWithIdAndParent(makeId(name), nil, nil, name, description, nodeType)
+	return NewNodeWithIdAndParent(name, nil, nil, name, description, nodeType)
 }
 
 func (n *Node) AddLabel(label string) *Node {
@@ -258,7 +262,7 @@ func (s *System) Container(name, description string) *Container {
 		Node:   NewNodeWithParent(s, s.design, name, description, NodeTypeContainer),
 		system: s,
 	}
-	s.design.nodes = append(s.design.nodes, container.Node)
+	s.design.nodes[container.Node.ID] = container.Node
 
 	// We record that the container belongs to this system
 	s.design.addRelationship(container, s, RelBelongsTo, "Is part of")
@@ -317,7 +321,7 @@ func (c *Container) ImpliedUsedBy(p INode, description string) *Container {
 
 // Component creates a new Component and relates container->component with BELONGS_TO.
 func (c *Container) Component(name, description string) *Component {
-	return c.ComponentWithId(makeId(name), name, description)
+	return c.ComponentWithId(name, name, description)
 }
 
 func (c *Container) ComponentWithId(id string, name, description string) *Component {
@@ -325,7 +329,7 @@ func (c *Container) ComponentWithId(id string, name, description string) *Compon
 		Node:      NewNodeWithIdAndParent(id, c, c.design, name, description, NodeTypeComponent),
 		container: c,
 	}
-	c.design.nodes = append(c.design.nodes, component.Node)
+	c.design.nodes[component.Node.ID] = component.Node
 
 	// We record that the component belongs to this container
 	c.design.addRelationship(component, c, RelBelongsTo, "Container contains Component")
@@ -335,10 +339,10 @@ func (c *Container) ComponentWithId(id string, name, description string) *Compon
 
 func (c *Container) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
 	component := &CustomComponent{
-		Node:      NewNodeWithIdAndParent(makeId(name), c, c.design, name, description, NodeType(label)),
+		Node:      NewNodeWithIdAndParent(name, c, c.design, name, description, NodeType(label)),
 		container: c,
 	}
-	c.design.nodes = append(c.design.nodes, component.Node)
+	c.design.nodes[component.Node.ID] = component.Node
 
 	// We record that the component belongs to this container
 	finalBelongsToDescription := "Belongs to"
@@ -353,6 +357,36 @@ func (c *Container) Custom(label string, name string, description string, belong
 type CustomComponent struct {
 	*Node
 	container *Container
+}
+
+func (c *CustomComponent) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
+	return c.CustomWithId(name, label, name, description, belongsToDescription...)
+}
+
+func (c *CustomComponent) CustomWithId(id string, label string, name string, description string, belongsToDescription ...string) *CustomComponent {
+	component := &CustomComponent{
+		Node:      NewNodeWithIdAndParent(id, c, c.design, name, description, NodeType(label)),
+		container: c.container,
+	}
+	c.design.nodes[component.Node.ID] = component.Node
+
+	return component
+}
+
+func (c *CustomComponent) Tag(tag string) *CustomComponent {
+	c.Node.Tag(tag)
+	return c
+}
+
+func (c *CustomComponent) Uses(n INode, description string) *CustomComponent {
+	c.design.addRelationship(c, n, RelUses, description)
+	return c
+}
+
+func (c *CustomComponent) UsedBy(p INode, description string) *CustomComponent {
+	c.design.addRelationship(p, c, RelUses, description)
+	c.container.ImpliedUsedBy(p, description) // Also relate container->person
+	return c
 }
 
 // -----------------------------------------------------------------------------
@@ -370,10 +404,10 @@ func (c *Component) AddLabel(label string) *Component {
 
 func (c *Component) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
 	component := &CustomComponent{
-		Node:      NewNodeWithIdAndParent(makeId(name), c, c.design, name, description, NodeType(label)),
+		Node:      NewNodeWithIdAndParent(name, c, c.design, name, description, NodeType(label)),
 		container: c.container,
 	}
-	c.design.nodes = append(c.design.nodes, component.Node)
+	c.design.nodes[component.Node.ID] = component.Node
 
 	// We record that the component belongs to this container
 	finalBelongsToDescription := "Belongs to"
@@ -419,7 +453,7 @@ type Design struct {
 	ID                string
 	Name              string
 	Description       string
-	nodes             []*Node
+	nodes             map[string]*Node
 	relationships     []Relationship
 	impliedUseEnabled bool
 }
@@ -430,29 +464,34 @@ func NewDesign(name, description string) *Design {
 		ID:          "design_" + name,
 		Name:        name,
 		Description: description,
-		nodes:       []*Node{},
+		nodes:       map[string]*Node{},
 	}
-	d.nodes = append(d.nodes, &Node{
-		ID:          makeId(d.ID),
+	d.nodes[d.ID] = &Node{
+		ID:          d.ID,
 		Name:        name,
 		Description: description,
 		NodeType:    NodeTypeDesign,
 		Tags:        []string{"design"},
 		IsExternal:  false,
 		design:      d,
-	})
+	}
 	return d
 
 }
 
 // NodeReference fetches an element from the design by its ID.
 func (d *Design) NodeReference(id string) INode {
-	for _, node := range d.nodes {
-		if node.FullId() == id {
-			return node
+	node, ok := d.nodes[id]
+	if !ok {
+		d.nodes[id] = &Node{
+			ID:          id,
+			NodeType:    NodeTypeUnknown,
+			Name:        id,
+			Description: "Unknown node",
 		}
+		node = d.nodes[id]
 	}
-	return &NodeReference{ID: id}
+	return node
 }
 
 type NodeReference struct {
@@ -487,7 +526,7 @@ func (d *Design) Person(name, description string) *Person {
 	p.Node.design = d // Set design reference
 	d.addRelationship(p, d, RelBelongsTo, "Belongs to")
 
-	d.nodes = append(d.nodes, p.Node)
+	d.nodes[p.Node.ID] = p.Node
 	return p
 }
 
@@ -509,13 +548,17 @@ func (d *Design) FullId() string {
 
 // System constructs a System node in this Design.
 func (d *Design) System(name, description string) *System {
+	return d.SystemWithId(name, name, description)
+}
+
+func (d *Design) SystemWithId(id string, name, description string) *System {
 	s := &System{
-		Node:   NewNode(name, description, NodeTypeSystem),
+		Node:   NewNodeWithIdAndParent(id, d, d, name, description, NodeTypeSystem),
 		design: d,
 	}
 	s.Node.design = d // Set design reference
 	d.addRelationship(s, d, RelBelongsTo, "Belongs to")
-	d.nodes = append(d.nodes, s.Node)
+	d.nodes[s.Node.ID] = s.Node
 	return s
 }
 
@@ -618,32 +661,40 @@ ON MATCH SET  ` + setStr + `
 
 		// MERGE all relationships
 		for _, rel := range d.relationships {
+			startNodeLabel := "Unknown"
+			endNodeLabel := "Unknown"
+			for _, node := range d.nodes {
+				if node.FullId() == rel.StartID {
+					startNodeLabel = string(node.NodeType)
+				}
+				if node.FullId() == rel.EndID {
+					endNodeLabel = string(node.NodeType)
+				}
+			}
 			query := fmt.Sprintf(`
-MERGE (start { id: $startID })
-MERGE (end { id: $endID })
+MERGE (start:%s { id: $startID })
+MERGE (end:%s { id: $endID })
 MERGE (start)-[r:%s { description: $desc }]->(end)
-`, rel.Type)
+`, startNodeLabel, endNodeLabel, rel.Type)
 
 			params := map[string]any{
 				"startID": rel.StartID,
 				"endID":   rel.EndID,
 				"desc":    rel.Description,
 			}
-			if _, e := tx.Run(ctx, query, params); e != nil {
+			if tmp, e := tx.Run(ctx, query, params); e != nil {
 				return nil, e
+			} else {
+				if _, e := tmp.Consume(ctx); e != nil {
+					return nil, e
+				} else {
+					// fmt.Println("Relationship created:", res)
+				}
 			}
 		}
 		return nil, nil
 	})
 	return err
-}
-
-// makeId generate a structurizr compatible ID from a name
-func makeId(name string) string {
-	// Generate a unique ID for the node
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, ".", "_")
-	return strings.ToLower(name)
 }
 
 // ClearNeo4j_UNSAFE deletes all nodes and relationships in the Neo4j database.
