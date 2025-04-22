@@ -370,6 +370,13 @@ func (c *CustomComponent) CustomWithId(id string, label string, name string, des
 	}
 	c.design.nodes[component.Node.ID] = component.Node
 
+	// We record that the component belongs to this container
+	finalBelongsToDescription := "Belongs to"
+	if len(belongsToDescription) > 0 {
+		finalBelongsToDescription = belongsToDescription[0]
+	}
+	c.design.addRelationship(component, c, RelBelongsTo, finalBelongsToDescription)
+
 	return component
 }
 
@@ -519,8 +526,9 @@ func (d *Design) EnableImpliedUse(enable bool) {
 
 // Person constructs a Person node in this Design.
 func (d *Design) Person(name, description string) *Person {
+	//  NewNodeWithIdAndParent(name, nil, nil, name, description, nodeType)
 	p := &Person{
-		Node:   NewNode("person_"+name, description, NodeTypePerson),
+		Node:   NewNodeWithIdAndParent("person_"+name, d, d, name, description, NodeTypePerson),
 		design: d,
 	}
 	p.Node.design = d // Set design reference
@@ -609,8 +617,8 @@ func (d *Design) DeleteFromNeo4j(ctx context.Context, driver neo4j.DriverWithCon
 }
 
 // SaveToNeo4j pushes the entire model to the Neo4j database
-func (d *Design) SaveToNeo4j(ctx context.Context, driver neo4j.DriverWithContext) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+func (d *Design) SaveToNeo4j(ctx context.Context, driver neo4j.DriverWithContext, sessConfig neo4j.SessionConfig) error {
+	session := driver.NewSession(ctx, sessConfig)
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
@@ -698,8 +706,8 @@ MERGE (start)-[r:%s { description: $desc }]->(end)
 }
 
 // ClearNeo4j_UNSAFE deletes all nodes and relationships in the Neo4j database.
-func ClearNeo4j_UNSAFE(ctx context.Context, driver neo4j.DriverWithContext) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+func ClearNeo4j_UNSAFE(ctx context.Context, driver neo4j.DriverWithContext, sessConfig neo4j.SessionConfig) error {
+	session := driver.NewSession(ctx, sessConfig)
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
