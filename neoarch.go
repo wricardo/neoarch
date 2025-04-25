@@ -332,7 +332,7 @@ func (c *Container) ComponentWithId(id string, name, description string) *Compon
 	c.design.nodes[component.Node.ID] = component.Node
 
 	// We record that the component belongs to this container
-	c.design.addRelationship(component, c, RelBelongsTo, "Container contains Component")
+	c.design.addRelationship(component, c, RelBelongsTo, "Is part of")
 
 	return component
 }
