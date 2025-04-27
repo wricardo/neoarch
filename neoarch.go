@@ -35,7 +35,6 @@ type RelationshipType string
 
 const (
 	RelUses          RelationshipType = "USES"
-	RelImpliedUse    RelationshipType = "IMPLIED_USE"
 	RelBelongsTo     RelationshipType = "BELONGS_TO"
 	RelInteractsWith RelationshipType = "INTERACTS_WITH"
 )
@@ -71,6 +70,18 @@ type Node struct {
 	IsExternal  bool     // For marking external nodes
 	design      *Design  // Link back to the containing Design
 	ParentNode  INode    // Parent node (if any)
+}
+
+func NewNodeWithId(id string, design *Design, name, description string, nodeType NodeType) *Node {
+	n := &Node{
+		ID:          id,
+		Name:        name,
+		Description: description,
+		NodeType:    nodeType,
+		design:      design,
+	}
+
+	return n
 }
 
 func NewNodeWithIdAndParent(id string, parent INode, design *Design, name, description string, nodeType NodeType) *Node {
@@ -220,19 +231,6 @@ type System struct {
 	design *Design // Link back to the parent design
 }
 
-func (s *System) ImpliedUse(p INode, description string) *System {
-	// s uses p (implied)
-	s.design.addRelationship(s, p, RelImpliedUse, description)
-	return s
-}
-
-// ImpliedUsedBy creates an implied usage relationship from a person to this system.
-func (s *System) ImpliedUsedBy(p INode, description string) *System {
-	// p uses s (implied)
-	s.design.addRelationship(p, s, RelImpliedUse, description)
-	return s
-}
-
 // UsedBy creates a "USES" relationship from the given person to this system.
 func (s *System) UsedBy(p *Person, description string) *System {
 	s.design.addRelationship(p, s, RelUses, description)
@@ -262,7 +260,7 @@ func (s *System) Container(name, description string) *Container {
 		Node:   NewNodeWithParent(s, s.design, name, description, NodeTypeContainer),
 		system: s,
 	}
-	s.design.nodes[container.Node.ID] = container.Node
+	s.design.setNode(container.Node)
 
 	// We record that the container belongs to this system
 	s.design.addRelationship(container, s, RelBelongsTo, "Is part of")
@@ -282,8 +280,6 @@ type Container struct {
 func (c *Container) UsedBy(p INode, description string) *Container {
 	// p uses c: add explicit relationship: p -> container
 	c.design.addRelationship(p, c, RelUses, description)
-	// Propagate: p also uses container's system: add implied relationship p -> system
-	c.system.ImpliedUsedBy(p, description)
 	return c
 }
 
@@ -291,31 +287,6 @@ func (c *Container) Uses(n INode, description string) *Container {
 	// c uses n: add explicit relationship: container -> target
 	c.design.addRelationship(c, n, RelUses, description)
 
-	// c.system impled usage: c.system.system -> n
-	c.system.ImpliedUse(n, description)
-
-	// If the target node belongs to a container, create an implied relationship: using system -> target container's system
-	if targetContainer, ok := n.(*Container); ok && targetContainer.system != nil {
-		if targetContainer.system.ID != c.system.ID {
-			c.system.ImpliedUse(targetContainer.system, description+" (implied "+targetContainer.ID+"--"+c.system.ID+")")
-		}
-	}
-
-	// If the target node belongs to a component, create an implied relationship: using system -> target component's system
-	if targetComponent, ok := n.(*Component); ok && targetComponent.container != nil && targetComponent.container.system != nil {
-		if targetComponent.container.system.ID != c.system.ID {
-			c.system.ImpliedUse(targetComponent.container.system, description)
-		}
-	}
-
-	return c
-}
-
-func (c *Container) ImpliedUsedBy(p INode, description string) *Container {
-	// p uses c (implied)
-	c.design.addRelationship(p, c, RelImpliedUse, description)
-	// Propagate: p also uses c.system (implied) as p -> system
-	c.system.ImpliedUsedBy(p, description)
 	return c
 }
 
@@ -329,7 +300,7 @@ func (c *Container) ComponentWithId(id string, name, description string) *Compon
 		Node:      NewNodeWithIdAndParent(id, c, c.design, name, description, NodeTypeComponent),
 		container: c,
 	}
-	c.design.nodes[component.Node.ID] = component.Node
+	c.design.setNode(component.Node)
 
 	// We record that the component belongs to this container
 	c.design.addRelationship(component, c, RelBelongsTo, "Is part of")
@@ -342,7 +313,7 @@ func (c *Container) Custom(label string, name string, description string, belong
 		Node:      NewNodeWithIdAndParent(name, c, c.design, name, description, NodeType(label)),
 		container: c,
 	}
-	c.design.nodes[component.Node.ID] = component.Node
+	c.design.setNode(component.Node)
 
 	// We record that the component belongs to this container
 	finalBelongsToDescription := "Belongs to"
@@ -363,12 +334,17 @@ func (c *CustomComponent) Custom(label string, name string, description string, 
 	return c.CustomWithId(name, label, name, description, belongsToDescription...)
 }
 
+func (c *CustomComponent) BelongsTo(n INode, description string) *CustomComponent {
+	c.design.addRelationship(c, n, RelBelongsTo, description)
+	return c
+}
+
 func (c *CustomComponent) CustomWithId(id string, label string, name string, description string, belongsToDescription ...string) *CustomComponent {
 	component := &CustomComponent{
 		Node:      NewNodeWithIdAndParent(id, c, c.design, name, description, NodeType(label)),
 		container: c.container,
 	}
-	c.design.nodes[component.Node.ID] = component.Node
+	c.design.setNode(component.Node)
 
 	// We record that the component belongs to this container
 	finalBelongsToDescription := "Belongs to"
@@ -392,7 +368,6 @@ func (c *CustomComponent) Uses(n INode, description string) *CustomComponent {
 
 func (c *CustomComponent) UsedBy(p INode, description string) *CustomComponent {
 	c.design.addRelationship(p, c, RelUses, description)
-	c.container.ImpliedUsedBy(p, description) // Also relate container->person
 	return c
 }
 
@@ -414,7 +389,7 @@ func (c *Component) Custom(label string, name string, description string, belong
 		Node:      NewNodeWithIdAndParent(name, c, c.design, name, description, NodeType(label)),
 		container: c.container,
 	}
-	c.design.nodes[component.Node.ID] = component.Node
+	c.design.setNode(component.Node)
 
 	// We record that the component belongs to this container
 	finalBelongsToDescription := "Belongs to"
@@ -428,26 +403,17 @@ func (c *Component) Custom(label string, name string, description string, belong
 
 func (c *Component) Uses(n INode, description string) *Component {
 	c.design.addRelationship(c, n, RelUses, description)
+	return c
+}
 
-	// If the target node belongs to a container, create an implied relationship:
-	// component's system uses target container's system (c.container.system -> targetContainer.system)
-	if targetContainer, ok := n.(*Container); ok && targetContainer.system != nil {
-		c.container.system.ImpliedUsedBy(targetContainer.system, description)
-	}
-
-	// If the target node belongs to a component, create an implied relationship:
-	// component's system uses target component's system (c.container.system -> targetComponent.container.system)
-	if targetComponent, ok := n.(*Component); ok && targetComponent.container != nil && targetComponent.container.system != nil {
-		c.container.system.ImpliedUsedBy(targetComponent.container.system, description)
-	}
-
+func (c *Component) BelongsTo(n INode, description string) *Component {
+	c.design.addRelationship(c, n, RelBelongsTo, description)
 	return c
 }
 
 // UsedBy creates a "USES" relationship from the given person to this component.
 func (c *Component) UsedBy(p INode, description string) *Component {
 	c.design.addRelationship(p, c, RelUses, description)
-	c.container.ImpliedUsedBy(p, description) // Also relate container->person
 	return c
 }
 
@@ -457,12 +423,11 @@ func (c *Component) UsedBy(p INode, description string) *Component {
 
 // Design represents a C4 model
 type Design struct {
-	ID                string
-	Name              string
-	Description       string
-	nodes             map[string]*Node
-	relationships     []Relationship
-	impliedUseEnabled bool
+	ID            string
+	Name          string
+	Description   string
+	nodes         map[string]*Node
+	relationships []Relationship
 }
 
 // NewDesign creates a new C4 design
@@ -473,7 +438,7 @@ func NewDesign(name, description string) *Design {
 		Description: description,
 		nodes:       map[string]*Node{},
 	}
-	d.nodes[d.ID] = &Node{
+	d.setNode(&Node{
 		ID:          d.ID,
 		Name:        name,
 		Description: description,
@@ -481,24 +446,59 @@ func NewDesign(name, description string) *Design {
 		Tags:        []string{"design"},
 		IsExternal:  false,
 		design:      d,
-	}
+	})
 	return d
 
+}
+
+func (d *Design) Custom(label string, name string, description string, belongsToDescription ...string) *CustomComponent {
+	component := &CustomComponent{
+		Node: NewNodeWithId(name, d, name, description, NodeType(label)),
+	}
+	d.setNode(component.Node)
+
+	// // We record that the component belongs to this design
+	// finalBelongsToDescription := "Belongs to"
+	// if len(belongsToDescription) > 0 {
+	// 	finalBelongsToDescription = belongsToDescription[0]
+	// }
+	// d.addRelationship(component, d, RelBelongsTo, finalBelongsToDescription)
+
+	return component
 }
 
 // NodeReference fetches an element from the design by its ID.
 func (d *Design) NodeReference(id string) INode {
 	node, ok := d.nodes[id]
 	if !ok {
-		d.nodes[id] = &Node{
+		d.setNode(&Node{
 			ID:          id,
 			NodeType:    NodeTypeUnknown,
 			Name:        id,
 			Description: "Unknown node",
-		}
-		node = d.nodes[id]
+			design:      d,
+			// ParentNode:  node,
+		})
 	}
 	return node
+}
+
+func (d *Design) setNode(node *Node) {
+	if _, ok := d.nodes[node.ID]; ok {
+		d.nodes[node.ID].Description = node.Description
+		d.nodes[node.ID].Labels = node.Labels
+		d.nodes[node.ID].Tags = node.Tags
+		d.nodes[node.ID].IsExternal = node.IsExternal
+		d.nodes[node.ID].ParentNode = node.ParentNode
+		d.nodes[node.ID].design = node.design
+
+		if d.nodes[node.ID].NodeType == NodeTypeUnknown {
+			d.nodes[node.ID].NodeType = node.NodeType
+			d.nodes[node.ID].Labels = node.Labels
+		}
+	} else {
+		d.nodes[node.ID] = node
+	}
 }
 
 type NodeReference struct {
@@ -518,23 +518,17 @@ func (n *NodeReference) GetID() string {
 	return n.ID
 }
 
-// EnableImpliedUse enables or disables implied use relationships.
-// Implied use relationships are relationships that are not explicitly created but are implied by the relationships between nodes.
-func (d *Design) EnableImpliedUse(enable bool) {
-	d.impliedUseEnabled = enable
-}
-
 // Person constructs a Person node in this Design.
 func (d *Design) Person(name, description string) *Person {
 	//  NewNodeWithIdAndParent(name, nil, nil, name, description, nodeType)
 	p := &Person{
-		Node:   NewNodeWithIdAndParent("person_"+name, d, d, name, description, NodeTypePerson),
+		Node:   NewNodeWithId("person_"+name, d, name, description, NodeTypePerson),
 		design: d,
 	}
 	p.Node.design = d // Set design reference
-	d.addRelationship(p, d, RelBelongsTo, "Belongs to")
+	// d.addRelationship(p, d, RelBelongsTo, "Belongs to")
 
-	d.nodes[p.Node.ID] = p.Node
+	d.setNode(p.Node)
 	return p
 }
 
@@ -561,31 +555,18 @@ func (d *Design) System(name, description string) *System {
 
 func (d *Design) SystemWithId(id string, name, description string) *System {
 	s := &System{
-		Node:   NewNodeWithIdAndParent(id, d, d, name, description, NodeTypeSystem),
+		Node:   NewNodeWithId(id, d, name, description, NodeTypeSystem),
 		design: d,
 	}
 	s.Node.design = d // Set design reference
-	d.addRelationship(s, d, RelBelongsTo, "Belongs to")
-	d.nodes[s.Node.ID] = s.Node
+	// d.addRelationship(s, d, RelBelongsTo, "Belongs to")
+	d.setNode(s.Node)
 	return s
 }
 
 // addRelationship is a helper to record relationships in the design.
 // It takes start and end nodes, relationship type, and a description.
 func (d *Design) addRelationship(startNode, endNode INode, relType RelationshipType, desc string) {
-	if !d.impliedUseEnabled && relType == RelImpliedUse {
-		return
-	}
-
-	// check if endId belongs_to startId, and we're adding a implied use from startId to endId, ignore
-	if relType == RelImpliedUse {
-		for _, rel := range d.relationships {
-			if rel.StartID == endNode.FullId() && rel.EndID == startNode.FullId() && rel.Type == RelBelongsTo {
-				return
-			}
-		}
-	}
-
 	d.relationships = append(d.relationships, Relationship{
 		StartID:     startNode.FullId(),
 		EndID:       endNode.FullId(),

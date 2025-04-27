@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -112,10 +111,8 @@ func main() {
 
 	// neoarch.ClearNeo4j_UNSAFE(driver)
 
-	if err := design.SaveToNeo4j(ctx, driver); err != nil {
+	if err := design.SaveToNeo4j(ctx, driver, neo4j.SessionConfig{DatabaseName: "neo4j"}); err != nil {
 		log.Fatal("Failed to persist design:", err)
 	}
 
-	// print the structurirz DSL
-	fmt.Println(design.ToStructurizrDSL())
 }

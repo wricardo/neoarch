@@ -53,7 +53,7 @@ func main() {
 	clearNeo4j(driver)
 
 	// Push the design to Neo4j
-	if err := design.SaveToNeo4j(context.Background(), driver); err != nil {
+	if err := design.SaveToNeo4j(context.Background(), driver, neo4j.SessionConfig{DatabaseName: "neo4j"}); err != nil {
 		log.Fatalf("Failed to save design: %v", err)
 	} else {
 		fmt.Println("Design saved successfully to Neo4j!")
